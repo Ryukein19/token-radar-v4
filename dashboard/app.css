@@ -40,6 +40,11 @@ table#board{width:100%;border-collapse:collapse;font-size:11.5px;background:var(
 #board .kin{font-size:10px;color:var(--amb);border:1px solid var(--amb);border-radius:3px;padding:0 3px;margin-left:4px}
 .vd{font-weight:700;border-radius:3px;padding:1px 6px;font-size:11px}
 .vd.FARM{background:#12351a;color:var(--grn)}.vd.MARGINAL{background:#3a2f07;color:var(--amb)}.vd.SKIP{background:#3d1414;color:var(--red)}
+.vd.tbill{background:#3a2f07;color:#e3b341;outline:1px solid #d29922}
+#ladder{display:flex;align-items:center;gap:14px;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:6px 10px;margin:8px 0}
+#ladder b{font-size:12px;flex:0 0 200px}
+#ladder svg{flex:1 1 auto;height:52px;min-width:0}
+#ladder p{font-size:11px;color:var(--mut);flex:0 0 400px}
 #boardfoot{color:var(--mut);font-size:11px;margin:6px 0}
 #board tr.detailrow td{background:#12233a;text-align:left;white-space:normal;padding:10px 12px}
 .detailrow-in h2{font-size:14px;margin-bottom:4px}
@@ -58,4 +63,4 @@ table#board{width:100%;border-collapse:collapse;font-size:11.5px;background:var(
 #method p{margin:4px 0}#method b{color:var(--txt)}#method code{color:var(--cyn);font-size:11px}
 footer{color:var(--mut);font-size:11px;margin-top:10px}
 @media(max-width:900px){#kpis{grid-template-columns:repeat(3,1fr)}#evidence{grid-template-columns:1fr}.detailrow-in .grid{grid-template-columns:1fr}}
-.detail-view .sub,.detail-view #integrity{display:none}
+.detail-view .sub,.detail-view #integrity,.detail-view #ladder{display:none}

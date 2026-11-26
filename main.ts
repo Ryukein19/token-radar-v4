@@ -312,7 +312,7 @@ function catRateMap(train: P[]): { map: Map<string, number>; base: number } {
   for (const [c, [k, n]] of by) map.set(c, (k + 16 * base) / (n + 16));
   return { map, base };
 }
-type OSpec = string[]; // subset of ['age','tvl','growth','kin','cat']
+type OSpec = string[]; // subset of ['age','tvl','growth','kin','cat','age2','chains','agetvl']
 function oFeats(p: P, spec: OSpec, cr: Map<string, number>, crBase: number): number[] {
   const r = [1];
   if (spec.includes('age')) r.push(ageYears(p) ?? 0);
@@ -320,6 +320,9 @@ function oFeats(p: P, spec: OSpec, cr: Map<string, number>, crBase: number): num
   if (spec.includes('growth')) r.push(relGrowth(p));
   if (spec.includes('kin')) r.push(isKin(p) ? 1 : 0);
   if (spec.includes('cat')) r.push(cr.get(p.category) ?? crBase);
+  if (spec.includes('age2')) r.push((ageYears(p) ?? 0) ** 2);
+  if (spec.includes('chains')) r.push(p.chains.length);
+  if (spec.includes('agetvl')) r.push((ageYears(p) ?? 0) * Math.log(p.tvl_usd));
   return r;
 }
 function fitLogit(train: P[], spec: OSpec): (p: P) => number {
@@ -367,7 +370,62 @@ function cvBrier(spec: OSpec): number {
   }
   return tot / n;
 }
+function inSampleBrier(spec: OSpec): number {
+  const f = fitLogit(peers, spec);
+  let tot = 0;
+  for (const p of peers) {
+    const d = f(p) - (hasToken(p) ? 1 : 0);
+    tot += d * d;
+  }
+  return tot / peers.length;
+}
+// Walk-forward Brier: fit on peers listed before the peers' median listing
+// date, score on peers listed on/after it — the same time-split idea as the
+// value model's walk-forward, so a term that only memorises the past cannot
+// pass the guard.
+const PEER_WF_CUTOFF = [...peers.map((p) => p.listed_at)].sort()[Math.floor(peers.length / 2)]!;
+function wfBrier(spec: OSpec): number {
+  const train = peers.filter((p) => p.listed_at < PEER_WF_CUTOFF);
+  const test = peers.filter((p) => p.listed_at >= PEER_WF_CUTOFF);
+  const f = fitLogit(train, spec);
+  let tot = 0;
+  for (const p of test) {
+    const d = f(p) - (hasToken(p) ? 1 : 0);
+    tot += d * d;
+  }
+  return tot / test.length;
+}
 const BASE_BRIER = PEER_RATE * (1 - PEER_RATE);
+// Guarded odds test (same guard as v3-c): a non-leaky logTVL/momentum term is
+// kept ONLY if its in-sample Brier gain over the current best non-leaky spec
+// is >= 0.002 AND its walk-forward Brier is not worse. Candidates: quadratic
+// age (the forward hazard peaks at 1-2y, so a linear age term may underfit),
+// chain count, and the age x logTVL interaction. Every candidate feature is
+// a snapshot field known at the snapshot date — nothing here is kin or leakage.
+const ODDS_BASE_SPEC: OSpec = ['age', 'tvl', 'growth', 'cat'];
+const ODDS_CANDIDATES: { spec: OSpec; label: string }[] = [
+  { spec: ['age', 'tvl', 'growth', 'cat', 'age2'], label: 'age + log TVL + growth + category + age²' },
+  { spec: ['age', 'tvl', 'growth', 'cat', 'chains'], label: 'age + log TVL + growth + category + chain count' },
+  { spec: ['age', 'tvl', 'growth', 'cat', 'agetvl'], label: 'age + log TVL + growth + category + age×logTVL' },
+  { spec: ['age', 'tvl', 'growth', 'cat', 'age2', 'chains', 'agetvl'], label: 'age + log TVL + growth + category + age² + chains + age×logTVL' },
+];
+const oddsBaseIn = inSampleBrier(ODDS_BASE_SPEC);
+const oddsBaseWf = wfBrier(ODDS_BASE_SPEC);
+const oddsCandidates = ODDS_CANDIDATES.map((c) => {
+  const cv = cvBrier(c.spec);
+  const ins = inSampleBrier(c.spec);
+  const wf = wfBrier(c.spec);
+  const gain = oddsBaseIn - ins;
+  const wfDelta = wf - oddsBaseWf;
+  const passes = gain >= 0.002 && wfDelta <= 0;
+  const gTxt = Math.abs(gain) < 0.00005 ? '0.0000' : gain.toFixed(4);
+  const wfTxt = wfDelta > 0 ? `WF worse ${wfDelta.toFixed(4)}` : wfDelta < 0 ? `WF better ${(-wfDelta).toFixed(4)}` : 'WF equal';
+  const verdict = passes
+    ? `KEPT — gain ${gTxt}; ${wfTxt}`
+    : `tested — not kept (gain ${gTxt}${gain < 0.002 ? ' < 0.002' : ''}; ${wfTxt})`;
+  return { ...c, cv, ins, wf, gain, wfDelta, passes, verdict };
+});
+const oddsKeptCandidate = oddsCandidates.filter((c) => c.passes).sort((a, b) => a.cv - b.cv || b.gain - a.gain)[0];
 const ODDS_TABLE: { spec: OSpec; label: string; verdict: string }[] = [
   { spec: [], label: 'base rate only', verdict: 'base' },
   { spec: ['age'], label: 'age', verdict: 'signal — not priced into forward odds' },
@@ -377,9 +435,11 @@ const ODDS_TABLE: { spec: OSpec; label: string; verdict: string }[] = [
   { spec: ['age', 'tvl', 'growth', 'cat'], label: 'age + log TVL + growth + category', verdict: 'signal — not priced (thin bands)' },
   { spec: ['age', 'tvl', 'growth', 'kin'], label: 'joint + fitted kin flag', verdict: 'TESTED — NOT KEPT: leakage, sign reverses' },
   { spec: ['age', 'tvl', 'growth', 'kin', 'cat'], label: 'joint + kin + category', verdict: 'TESTED — NOT KEPT: leakage, sign reverses' },
+  ...oddsCandidates.map((c) => ({ spec: c.spec, label: c.label, verdict: c.verdict })),
 ];
 const oddsEvidence = ODDS_TABLE.map((t) => ({ ...t, brier: cvBrier(t.spec) }));
-const oddsKeptBrier = oddsEvidence.find((t) => t.spec.join() === ['age', 'tvl', 'growth', 'cat'].join())!.brier;
+const oddsKeptSpec = oddsKeptCandidate ? oddsKeptCandidate.spec : ODDS_BASE_SPEC;
+const oddsKeptBrier = oddsEvidence.find((t) => t.spec.join() === oddsKeptSpec.join())!.brier;
 
 // Forward launch odds: P(token within 24 months | still no token at age t).
 // From the peers' own age bands: F(t) = share of protocols listed t years ago
@@ -596,6 +656,7 @@ const rows = scored.map((s, i) => {
       capital_charge_usd: +fm.capital.toFixed(2),
       net_usd: +fm.net.toFixed(2),
       net_after_capital_usd: +fm.netAfterCapital.toFixed(2),
+      clears_capital_charge: fm.verdict === 'FARM' && fm.net > fm.capital,
       net_per_hour_usd: +fm.perHour.toFixed(2),
       hours: +fm.hours.toFixed(2),
       verdict: fm.verdict,
@@ -606,6 +667,22 @@ const rows = scored.map((s, i) => {
 });
 const farmCounts = { FARM: 0, MARGINAL: 0, SKIP: 0 };
 for (const r of rows) farmCounts[r.farm.verdict as keyof typeof farmCounts]++;
+// Deposit ladder: the same farm formula at flat tickets (7% drop, 26 wk),
+// counted over the program's own rows — the counts on the cover come from
+// here, never hand-typed.
+function ladderCounts(ticket: number): { farm: number; marginal: number; skip: number } {
+  const c = { farm: 0, marginal: 0, skip: 0 };
+  for (const r of rows) {
+    const drop = r.implied_value_usd * DROP_SHARE * (ticket / r.tvl_usd);
+    const fees = (GAS[r.chains[0]] ?? 5) + 0.0025 * ticket;
+    const net = drop - fees;
+    const perHour = net / r.farm.hours;
+    const v = net >= 25 && perHour >= HOURS_BAR ? 'farm' : net > 0 ? 'marginal' : 'skip';
+    c[v]++;
+  }
+  return c;
+}
+const depositLadder = [250, 1000, 2500, 5000, 10000].map((ticket) => ({ ticket, ...ladderCounts(ticket) }));
 const farmClearsCapital = rows.filter((r) => r.farm.verdict === 'FARM' && r.farm.net_usd > r.farm.capital_charge_usd).length;
 const totalImplied = rows.reduce((s, r) => s + r.implied_value_usd, 0);
 for (const r of rows) {
@@ -645,14 +722,31 @@ const evidence = {
   peer_token_rate: +PEER_RATE.toFixed(3),
   base_brier: +BASE_BRIER.toFixed(3),
   odds_brier_kept: +oddsKeptBrier.toFixed(3),
+  odds_guard: {
+    base_spec: ODDS_BASE_SPEC.join(' + '),
+    base_in_sample_brier: +oddsBaseIn.toFixed(4),
+    base_wf_brier: +oddsBaseWf.toFixed(4),
+    wf_cutoff: PEER_WF_CUTOFF,
+    candidates: oddsCandidates.map((c) => ({
+      label: c.label,
+      cv_brier: +c.cv.toFixed(4),
+      in_sample_brier: +c.ins.toFixed(4),
+      wf_brier: +c.wf.toFixed(4),
+      in_sample_gain: +c.gain.toFixed(4),
+      wf_delta: +c.wfDelta.toFixed(4),
+      kept: c.passes,
+    })),
+  },
   odds_table: oddsEvidence.map((t) => ({ label: t.label, brier: +t.brier.toFixed(3), verdict: t.verdict })),
   forward_table: forwardTable,
   median_change_7d: +medChange7d.toFixed(2),
   growth_winsor: [+GROWTH_LO.toFixed(3), +GROWTH_HI.toFixed(3)],
+  growth_coef: keptSpec.includes('growth') ? +coefOf2('growth') : 0,
   ledger,
   set_aside_reasons: setAsideReasons,
   farm_counts: farmCounts,
   farm_clears_capital: farmClearsCapital,
+  deposit_ladder: depositLadder,
   total_implied_usd: totalImplied,
   watchlist_covered: rows.filter((r) => r.tier === 'Watchlist').length,
 };

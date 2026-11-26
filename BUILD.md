@@ -30,9 +30,9 @@ build: no source from token-radar / v3-a / v3-b / v3-c was opened. `main.ts`
 | Farm at flat $1,000 | 0 FARM / 93 MARGINAL / 105 SKIP (honest — shown via the deposit ladder, not hidden) |
 | Farm at flat $5,000 | 24 FARM / 122 MARGINAL / 52 SKIP |
 | FARM rows also clearing the T-bill capital charge | 1 of 17 (disclosed on the page) |
-| Dashboard | 3 files, 28,432 bytes; dossier text 28,695 bytes (cap 65,536) |
-| Dossier | 1,285,229 bytes (cap 1.5 MiB); rebuilds byte-equal |
-| Screenshots (1440×900) | 1-board.png 302,620 B · 2-detail.jpg 332,509 B (JPEG q93) · 3-filtered.png 306,498 B |
+| Dashboard | 3 files, 32,039 bytes; dossier text 32,302 bytes (cap 65,536) |
+| Dossier | 1,242,562 bytes (cap 1.5 MiB); rebuilds byte-equal |
+| Screenshots (1440×900) | 1-board.png 300,511 B · 2-detail.jpg 303,887 B (JPEG) · 3-filtered.png 302,468 B |
 
 ## Value-term evidence table (keep rule: a term joins only if it lowers the
 ## held-out miss on BOTH leave-one-out and walk-forward by ≥1%)
@@ -68,6 +68,19 @@ the term is kept because it lowers the held-out miss on both tests.
 | age + log TVL + growth + category | 0.203 | signal — not priced (thin bands) |
 | joint + fitted kin flag | 0.174 | **TESTED — NOT KEPT: leakage, sign reverses** |
 | joint + kin + category | 0.170 | **TESTED — NOT KEPT: leakage, sign reverses** |
+| age + log TVL + growth + category + age² | 0.203 | tested — not kept (in-sample gain 0.0001 < 0.002 guard; WF worse by 0.0017) |
+| age + log TVL + growth + category + chain count | 0.204 | tested — not kept (in-sample gain 0.0004 < 0.002 guard; WF worse by 0.0006) |
+| age + log TVL + growth + category + age×logTVL | 0.204 | tested — not kept (in-sample gain −0.0006 < 0.002 guard; WF worse by 0.0013) |
+| age + log TVL + growth + category + age² + chains + age×logTVL | 0.204 | tested — not kept (in-sample gain 0.0000 < 0.002 guard; WF worse by 0.0025) |
+
+Guarded odds test (fix pass, 2026-11-26): the four non-leaky logTVL/momentum
+terms were tested against the kept spec (age + log TVL + growth + category,
+in-sample Brier 0.1883, walk-forward Brier 0.2156, WF cutoff 2025-01-06, the
+peers' median listing date). Keep rule: in-sample gain ≥ 0.002 AND
+walk-forward not worse. **None passed** — the best in-sample gain was 0.0004
+(chain count) and every candidate was worse walk-forward. The odds model is
+unchanged (Brier 0.203). The gap to v1's 0.1698 is not closable without the
+leakage term, so it is not chased.
 
 The board prices **forward** odds (the age-band 24-month hazard), not the
 logistic. The fitted kin flag scores best but is leakage: it is a family
@@ -117,19 +130,77 @@ and times come from the same fee model. Active time 2.67h per plan.
 ## Verification (replicated locally)
 
 - Two runs into separate directories: **byte-identical** (`diff -r` clean).
-- All 7 gate rows replicated and passing: dashboard 3 files / 28,432 B, no
-  `http(s)` strings; board 198 rows, ranks 1..198, implied positive whole
-  ≤1e14, non-rising, not all equal; watchlist 40/40; farm steps 3–12 ×
-  20–600 chars; screenshots 3 × 1440×900, ≤512 KiB; dossier 1,285,229 B,
-  text 28,695 B; `buildDossier` rebuild from the output is byte-equal.
+- All 7 gate rows replicated and passing (see `verify.py`): dashboard 3 files /
+  32,039 B, no `http(s)` strings; board 198 rows, ranks 1..198, implied positive
+  whole ≤1e14, non-rising, not all equal; watchlist 40/40; farm steps 3–12 ×
+  20–600 chars; screenshots 3 × 1440×900, ≤512 KiB (300,511 / 303,887 /
+  302,468 B); dossier 1,242,562 B, text 32,302 B; `buildDossier` rebuild from
+  the output is byte-equal.
 - `data.js` checksum equals sha256 of `board.json`; `data.js` rows equal
   `board.json` rows.
 - Screenshots re-rendered from the real dashboard in headless Chromium
-  (1440×900): (1) board cover, (2) detail view with b14g (#6, top FARM row)
-  expanded — full WHEN/STEP/COST/TIME table + budget line + deposit ladder,
-  (3) filtered view (tier Early, sorted by $/h).
+  (1440×900, `shoot.py`): (1) board cover — farm-first sort, first row b14g
+  (#6, top FARM row by net), second visible row Anemoy Capital (#10, the
+  FARM★ beacon); (2) detail view with b14g expanded — full WHEN/STEP/COST/TIME
+  table + budget line + deposit ladder; (3) filtered view (tier Early, sorted
+  by $/h).
 - NOT done (submit-time steps, per the brief): no GitHub repo, no submit, no
   `makefun final`, no bundle/check.
+
+## FIXES — cover-only fix pass (on top of b7890f5)
+
+Driven by the Groq + OpenRouter sparring verdicts (`SPAR_GROQ.md`,
+`SPAR_OPENROUTER.md`). Cover-only: the fitted value model is untouched
+(LOO ×2.84, WF ×2.51, Brier 0.203 — all unchanged). What changed:
+
+1. **Farm-first board sort.** The cover board now defaults to sorting by farm
+   score (FARM, then MARGINAL, then SKIP, each by net desc) instead of implied
+   value. The first board row on first paint is b14g (#6, top FARM row by net,
+   $193.08), not a giant-protocol SKIP. A Sort control (`Farm first` /
+   `Implied value (rank)` / `Net` / `$/h` / `TVL` / `Odds`) switches back; `#`
+   stays the implied-value rank. The integrity strip now reads "board.json
+   self-check" so its rank/value claims are visibly about the data, not the
+   display order.
+2. **T-bill-adjusted verdict tier (FARM★).** A FARM row that also clears the
+   T-bill capital charge is shown as **FARM★** (gold) on the board, in the
+   counts line, in the KPI tile, and in the detail view — with the sentence
+   "the only FARM row that does so at this scenario" when the count is 1.
+   Exactly one row qualifies at the default scenario: **Anemoy Capital (#10,
+   net $151.18 vs capital charge $118.69)** — verified from the program
+   (`farm.clears_capital_charge`, 1 of 17 FARM rows). The verdict in the data
+   stays FARM; ★ is a live display tier recomputed from the same farm formula
+   when the scenario controls change.
+3. **Deposit ladder on the cover (sparkline).** A strip under the KPIs shows
+   FARM rows by flat ticket, counted by the program (`evidence.deposit_ladder`):
+   $250 → 0 · $1,000 → 0 · $2,500 → 3 · $5,000 → 24 · $10,000 → 83 FARM
+   (with 36/93/121/122/71 MARGINAL and 162/105/74/52/44 SKIP respectively).
+   The strip states the honest reading: flat $1,000 → 0 FARM, $5,000 → 24
+   FARM — the sized 0.02%-of-TVL ticket (default) is what makes 17 rows farm.
+   The strip is hidden in the detail view so the expanded row keeps its layout.
+4. **relGrowth coefficient explained on the cover.** The value-miss evidence
+   table now carries the sentence: the kept growth term is −2.916, so 1 point
+   above the median 7d (−8.23%) prices exp(−2.916 × 0.01) ≈ 0.97× — about
+   2.9% lower per point. The sign is negative because in this down week the
+   comps that fell least were not the priciest; the sign is the data's, not a
+   choice. Coefficient, median and winsor bounds all come from
+   `evidence.growth_coef` / `median_change_7d` / `growth_winsor` — nothing
+   hand-typed.
+5. **Guarded odds test — FAILED, model unchanged.** Four non-leaky
+   logTVL/momentum terms (quadratic age, chain count, age×logTVL, all three)
+   tested against the kept spec (in-sample 0.1883, WF 0.2156). Best in-sample
+   gain 0.0004 (chain count, under the 0.002 guard); every candidate was worse
+   walk-forward (+0.0006 to +0.0025). Full numbers in the odds table above and
+   in `evidence.odds_guard`. The odds model, the board odds (forward hazard)
+   and the 0.203 Brier are exactly as before. Brier ≤ 0.19 is not reachable
+   with non-leaky terms on this snapshot.
+
+Also tightened (layout, no numbers changed): KPI sub-lines shortened to one
+line, ledger legend to one line, evidence paragraphs trimmed — so the board's
+first rows stay visible in the 1440×900 cover screenshot after the ladder and
+the four new odds rows were added. Re-verified after the fix: two runs
+byte-identical, all 7 gate rows passing (`verify.py`), screenshots re-rendered
+from the real dashboard (300,511 / 303,887 / 302,468 B — all in the 300–350 KB
+band), dashboard 32,039 B, dossier 1,242,562 B, text 32,302 B.
 
 ## How to reproduce
 

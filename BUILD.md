@@ -149,8 +149,8 @@ and times come from the same fee model. Active time 2.67h per plan.
 
 ## FIXES — cover-only fix pass (on top of b7890f5)
 
-Driven by the Groq + OpenRouter sparring verdicts (`SPAR_GROQ.md`,
-`SPAR_OPENROUTER.md`). Cover-only: the fitted value model is untouched
+Driven by the Groq + OpenRouter sparring verdicts (archived with the research
+notes in `../token-radar-v4-research/`). Cover-only: the fitted value model is untouched
 (LOO ×2.84, WF ×2.51, Brier 0.203 — all unchanged). What changed:
 
 1. **Farm-first board sort.** The cover board now defaults to sorting by farm

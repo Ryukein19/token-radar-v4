@@ -1,3 +1,7 @@
+[![token-radar-01](https://make.fun/badge/token-radar-01.svg)](https://make.fun/bounty/token-radar-01)
+[![rank](https://make.fun/badge/token-radar-01/Ryukein19/token-radar-v4/rank.svg)](https://make.fun/bounty/token-radar-01)
+[![reward](https://make.fun/badge/token-radar-01/Ryukein19/token-radar-v4/reward.svg)](https://make.fun/bounty/token-radar-01)
+
 # Token Radar v4
 
 A pre-token launch radar built fresh from a sealed DefiLlama snapshot
